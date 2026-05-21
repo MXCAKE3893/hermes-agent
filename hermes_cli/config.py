@@ -2775,6 +2775,49 @@ OPTIONAL_ENV_VARS = {
         "password": True,
         "category": "messaging",
     },
+    "NEXTCLOUD_TALK_ENABLED": {
+        "description": "Enable the Nextcloud Talk bots-v1 gateway adapter.",
+        "prompt": "Enable Nextcloud Talk bot gateway (true/false)",
+        "url": "https://nextcloud-talk.readthedocs.io/en/latest/bots/",
+        "password": False,
+        "category": "messaging",
+    },
+    "NEXTCLOUD_TALK_BOT_SECRET": {
+        "description": "Shared secret configured when installing the Nextcloud Talk webhook bot.",
+        "prompt": "Nextcloud Talk bot shared secret",
+        "url": "https://nextcloud-talk.readthedocs.io/en/latest/bots/",
+        "password": True,
+        "category": "messaging",
+    },
+    "NEXTCLOUD_TALK_BASE_URL": {
+        "description": "Base URL of the Nextcloud server, e.g. https://nextcloud.example.com.",
+        "prompt": "Nextcloud server base URL",
+        "url": "https://nextcloud-talk.readthedocs.io/en/latest/bots/",
+        "password": False,
+        "category": "messaging",
+    },
+    "NEXTCLOUD_TALK_HOST": {
+        "description": "Host interface for the Nextcloud Talk webhook server (default: 0.0.0.0).",
+        "prompt": "Nextcloud Talk webhook bind host",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+        "advanced": True,
+    },
+    "NEXTCLOUD_TALK_PORT": {
+        "description": "Port for the Nextcloud Talk webhook server (default: 8647).",
+        "prompt": "Nextcloud Talk webhook port",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+    },
+    "NEXTCLOUD_TALK_WEBHOOK_PATH": {
+        "description": "Path for the Nextcloud Talk webhook endpoint (default: /nextcloud-talk).",
+        "prompt": "Nextcloud Talk webhook path",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+    },
 
     # ── Agent settings ──
     # NOTE: MESSAGING_CWD was removed here — use terminal.cwd in config.yaml

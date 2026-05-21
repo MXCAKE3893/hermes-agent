@@ -120,6 +120,7 @@ class Platform(Enum):
     API_SERVER = "api_server"
     WEBHOOK = "webhook"
     MSGRAPH_WEBHOOK = "msgraph_webhook"
+    NEXTCLOUD_TALK = "nextcloud_talk"
     FEISHU = "feishu"
     WECOM = "wecom"
     WECOM_CALLBACK = "wecom_callback"
@@ -425,6 +426,9 @@ _PLATFORM_CONNECTED_CHECKERS: dict[Platform, Callable[[PlatformConfig], bool]] =
     Platform.API_SERVER: lambda cfg: True,
     Platform.WEBHOOK: lambda cfg: True,
     Platform.MSGRAPH_WEBHOOK: lambda cfg: True,
+    Platform.NEXTCLOUD_TALK: lambda cfg: bool(
+        cfg.extra.get("secret") or cfg.token or os.getenv("NEXTCLOUD_TALK_BOT_SECRET")
+    ),
     Platform.FEISHU: lambda cfg: bool(cfg.extra.get("app_id")),
     Platform.WECOM: lambda cfg: bool(cfg.extra.get("bot_id")),
     Platform.WECOM_CALLBACK: lambda cfg: bool(
@@ -1610,6 +1614,54 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
                 config.platforms[Platform.MSGRAPH_WEBHOOK].extra[
                     "allowed_source_cidrs"
                 ] = cidrs
+
+    # Nextcloud Talk webhook bot platform
+    nextcloud_talk_enabled = os.getenv("NEXTCLOUD_TALK_ENABLED", "").lower() in {
+        "true",
+        "1",
+        "yes",
+    }
+    nextcloud_talk_secret = os.getenv("NEXTCLOUD_TALK_BOT_SECRET", "")
+    nextcloud_talk_base_url = os.getenv("NEXTCLOUD_TALK_BASE_URL", "")
+    nextcloud_talk_host = os.getenv("NEXTCLOUD_TALK_HOST", "")
+    nextcloud_talk_port = os.getenv("NEXTCLOUD_TALK_PORT")
+    nextcloud_talk_webhook_path = os.getenv("NEXTCLOUD_TALK_WEBHOOK_PATH", "")
+    nextcloud_talk_home = os.getenv("NEXTCLOUD_TALK_HOME_CHANNEL", "")
+    if (
+        nextcloud_talk_enabled
+        or Platform.NEXTCLOUD_TALK in config.platforms
+        or nextcloud_talk_secret
+        or nextcloud_talk_base_url
+        or nextcloud_talk_host
+        or nextcloud_talk_port
+        or nextcloud_talk_webhook_path
+        or nextcloud_talk_home
+    ):
+        if Platform.NEXTCLOUD_TALK not in config.platforms:
+            config.platforms[Platform.NEXTCLOUD_TALK] = PlatformConfig()
+        nextcloud_cfg = config.platforms[Platform.NEXTCLOUD_TALK]
+        if nextcloud_talk_enabled:
+            nextcloud_cfg.enabled = True
+        if nextcloud_talk_secret:
+            nextcloud_cfg.extra["secret"] = nextcloud_talk_secret
+        if nextcloud_talk_base_url:
+            nextcloud_cfg.extra["base_url"] = nextcloud_talk_base_url.rstrip("/")
+        if nextcloud_talk_host:
+            nextcloud_cfg.extra["host"] = nextcloud_talk_host
+        if nextcloud_talk_port:
+            try:
+                nextcloud_cfg.extra["port"] = int(nextcloud_talk_port)
+            except ValueError:
+                pass
+        if nextcloud_talk_webhook_path:
+            nextcloud_cfg.extra["webhook_path"] = nextcloud_talk_webhook_path
+        if nextcloud_talk_home:
+            nextcloud_cfg.home_channel = HomeChannel(
+                platform=Platform.NEXTCLOUD_TALK,
+                chat_id=nextcloud_talk_home,
+                name=os.getenv("NEXTCLOUD_TALK_HOME_CHANNEL_NAME", ""),
+                thread_id=os.getenv("NEXTCLOUD_TALK_HOME_CHANNEL_THREAD_ID") or None,
+            )
 
     # DingTalk
     dingtalk_client_id = os.getenv("DINGTALK_CLIENT_ID")

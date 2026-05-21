@@ -6066,6 +6066,16 @@ class GatewayRunner:
                 return None
             return MSGraphWebhookAdapter(config)
 
+        elif platform == Platform.NEXTCLOUD_TALK:
+            from gateway.platforms.nextcloud_talk import (
+                NextcloudTalkAdapter,
+                check_nextcloud_talk_requirements,
+            )
+            if not check_nextcloud_talk_requirements():
+                logger.warning("Nextcloud Talk: aiohttp not installed")
+                return None
+            return NextcloudTalkAdapter(config)
+
         elif platform == Platform.BLUEBUBBLES:
             from gateway.platforms.bluebubbles import BlueBubblesAdapter, check_bluebubbles_requirements
             if not check_bluebubbles_requirements():
@@ -6104,7 +6114,11 @@ class GatewayRunner:
         # connection, so HA events are always authorized.
         # Webhook events are authenticated via HMAC signature validation in
         # the adapter itself — no user allowlist applies.
-        if source.platform in {Platform.HOMEASSISTANT, Platform.WEBHOOK}:
+        if source.platform in {
+            Platform.HOMEASSISTANT,
+            Platform.WEBHOOK,
+            Platform.NEXTCLOUD_TALK,
+        }:
             return True
 
         user_id = source.user_id

@@ -89,6 +89,14 @@ def test_get_platform_tools_default_whatsapp_includes_web():
     assert "web" in enabled
 
 
+def test_get_platform_tools_default_nextcloud_talk_includes_core_tools():
+    enabled = _get_platform_tools({}, "nextcloud_talk")
+
+    assert {"web", "terminal", "file", "browser", "skills", "memory", "delegation"}.issubset(enabled)
+    assert "messaging" in enabled
+    assert not enabled.isdisjoint({"web", "terminal", "file"})
+
+
 def test_get_platform_tools_homeassistant_platform_keeps_homeassistant_toolset():
     enabled = _get_platform_tools({}, "homeassistant")
 

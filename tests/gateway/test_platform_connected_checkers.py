@@ -83,6 +83,8 @@ def test_checker_returns_true_when_configured(platform, checker, monkeypatch):
         Platform.WHATSAPP,
     }:
         mock_config.extra = {}
+    elif platform == Platform.NEXTCLOUD_TALK:
+        mock_config.extra = {"secret": "shared-secret"}
     elif platform == Platform.FEISHU:
         mock_config.extra = {"app_id": "app"}
     elif platform == Platform.WECOM:

@@ -724,11 +724,28 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
             last_result = result
         return last_result
 
+    # --- Nextcloud Talk: upload local files to Nextcloud Files, then share into Talk ---
+    if platform == Platform.NEXTCLOUD_TALK:
+        last_result = None
+        for i, chunk in enumerate(chunks):
+            is_last = (i == len(chunks) - 1)
+            result = await _send_nextcloud_talk(
+                pconfig,
+                chat_id,
+                chunk,
+                media_files=media_files if is_last else None,
+                thread_id=thread_id,
+            )
+            if isinstance(result, dict) and result.get("error"):
+                return result
+            last_result = result
+        return last_result
+
     # --- Non-media platforms ---
     if media_files and not message.strip():
         return {
             "error": (
-                f"send_message MEDIA delivery is currently only supported for telegram, discord, matrix, weixin, signal, yuanbao and feishu; "
+                f"send_message MEDIA delivery is currently only supported for telegram, discord, matrix, weixin, signal, yuanbao, feishu and nextcloud_talk; "
                 f"target {platform.value} had only media attachments"
             )
         }
@@ -736,7 +753,7 @@ async def _send_to_platform(platform, pconfig, chat_id, message, thread_id=None,
     if media_files:
         warning = (
             f"MEDIA attachments were omitted for {platform.value}; "
-            "native send_message media delivery is currently only supported for telegram, discord, matrix, weixin, signal, yuanbao and feishu"
+            "native send_message media delivery is currently only supported for telegram, discord, matrix, weixin, signal, yuanbao, feishu and nextcloud_talk"
         )
 
     last_result = None
@@ -1690,6 +1707,65 @@ async def _send_matrix_via_adapter(pconfig, chat_id, message, media_files=None, 
         }
     except Exception as e:
         return _error(f"Matrix send failed: {e}")
+    finally:
+        try:
+            await adapter.disconnect()
+        except Exception:
+            pass
+
+
+async def _send_nextcloud_talk(pconfig, chat_id, message, media_files=None, thread_id=None):
+    """Send via Nextcloud Talk, sharing local media through Nextcloud Files."""
+    try:
+        from gateway.platforms.nextcloud_talk import NextcloudTalkAdapter
+    except ImportError:
+        return {"error": "Nextcloud Talk adapter is not available."}
+
+    media_files = media_files or []
+    metadata = {"thread_id": thread_id} if thread_id else None
+    # Do not reuse the live gateway adapter here. Its aiohttp ClientSession is
+    # bound to the gateway event loop, while send_message runs through
+    # model_tools._run_async() on a tool loop. Cross-loop reuse raises
+    # "Timeout context manager should be used inside a task".
+    adapter = NextcloudTalkAdapter(pconfig)
+
+    try:
+        last_result = None
+        if message.strip():
+            last_result = await adapter.send(chat_id, message, metadata=metadata)
+            if not last_result.success:
+                return _error(f"Nextcloud Talk send failed: {last_result.error}")
+
+        for media_path, is_voice in media_files:
+            if not os.path.exists(media_path):
+                return _error(f"Media file not found: {media_path}")
+
+            ext = os.path.splitext(media_path)[1].lower()
+            if ext in _IMAGE_EXTS:
+                last_result = await adapter.send_image_file(chat_id, media_path, metadata=metadata)
+            elif ext in _VIDEO_EXTS:
+                last_result = await adapter.send_video(chat_id, media_path, metadata=metadata)
+            elif ext in _VOICE_EXTS and is_voice:
+                last_result = await adapter.send_voice(chat_id, media_path, metadata=metadata)
+            elif ext in _AUDIO_EXTS:
+                last_result = await adapter.send_voice(chat_id, media_path, metadata=metadata)
+            else:
+                last_result = await adapter.send_document(chat_id, media_path, metadata=metadata)
+
+            if not last_result.success:
+                return _error(f"Nextcloud Talk media send failed: {last_result.error}")
+
+        if last_result is None:
+            return {"error": "No deliverable text or media remained after processing MEDIA tags"}
+
+        return {
+            "success": True,
+            "platform": "nextcloud_talk",
+            "chat_id": chat_id,
+            "message_id": last_result.message_id,
+        }
+    except Exception as e:
+        return _error(f"Nextcloud Talk send failed: {e}")
     finally:
         try:
             await adapter.disconnect()
