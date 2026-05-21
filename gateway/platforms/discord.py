@@ -2706,8 +2706,13 @@ class DiscordAdapter(BasePlatformAdapter):
 
         Discord's TYPING_START gateway event is unreliable in DMs for bots.
         Instead, start a background loop that hits the typing endpoint every
-        8 seconds (typing indicator lasts ~10s).  The loop is cancelled when
+        12 seconds (typing indicator lasts ~10s).  The loop is cancelled when
         stop_typing() is called (after the response is sent).
+
+        Rate-limit handling: if a 429 is encountered, the loop logs a
+        warning, sleeps for the ``retry_after`` duration (or a sensible
+        default), and continues — it does NOT die on a single rate-limit
+        hit.  Only CancelledError (from stop_typing) stops the loop.
         """
         if not self._client:
             return
@@ -2727,9 +2732,22 @@ class DiscordAdapter(BasePlatformAdapter):
                     except asyncio.CancelledError:
                         return
                     except Exception as e:
-                        logger.debug("Discord typing indicator failed for %s: %s", chat_id, e)
-                        return
-                    await asyncio.sleep(8)
+                        # Don't die on 429 — backoff and continue
+                        retry_after = self._extract_discord_retry_after(e)
+                        if retry_after is not None:
+                            logger.warning(
+                                "Typing indicator rate-limited for %s; retrying in %.1fs",
+                                chat_id, retry_after,
+                            )
+                        else:
+                            logger.debug(
+                                "Discord typing indicator failed for %s: %s",
+                                chat_id, e,
+                            )
+                            return
+                        await asyncio.sleep(retry_after)
+                        continue
+                    await asyncio.sleep(12)
             except asyncio.CancelledError:
                 pass
             finally:
@@ -3601,6 +3619,24 @@ class DiscordAdapter(BasePlatformAdapter):
             )
             return 32 * 1024 * 1024
         return max(0, value)
+
+    @staticmethod
+    def _is_discord_voice_message_attachment(att: Any) -> bool:
+        """Return True when a Discord audio attachment is a native voice note."""
+        marker = getattr(att, "is_voice_message", None)
+        if marker is not None:
+            if callable(marker):
+                try:
+                    return bool(marker())
+                except Exception as exc:
+                    logger.debug("[Discord] is_voice_message() failed for attachment: %s", exc)
+                    return False
+            return bool(marker)
+
+        return (
+            getattr(att, "duration", None) is not None
+            and getattr(att, "waveform", None) is not None
+        )
 
     def _discord_free_response_channels(self) -> set:
         """Return Discord channel IDs where no bot mention is required.
@@ -4542,7 +4578,10 @@ class DiscordAdapter(BasePlatformAdapter):
                     elif att.content_type.startswith("video/"):
                         msg_type = MessageType.VIDEO
                     elif att.content_type.startswith("audio/"):
-                        msg_type = MessageType.AUDIO
+                        if self._is_discord_voice_message_attachment(att):
+                            msg_type = MessageType.VOICE
+                        else:
+                            msg_type = MessageType.AUDIO
                     else:
                         doc_ext = ""
                         if att.filename:
