@@ -175,6 +175,27 @@ class TestNextcloudTalkParsing:
 
         assert event.reply_to_message_id == "99"
         assert event.reply_to_text == "parent text"
+        assert event.reply_to_sender == "Grace"
+        assert event.source.thread_id == "99"
+
+    def test_reply_payload_from_bot_builds_reply_context(self):
+        adapter = _make_adapter()
+        payload = _create_payload()
+        payload["object"]["inReplyTo"] = {
+            "actor": {"type": "Application", "id": "bots/hermes", "name": "Hermes"},
+            "object": {
+                "type": "Note",
+                "id": "100",
+                "content": json.dumps({"message": "bot text", "parameters": {}}),
+            },
+        }
+
+        event = adapter._build_message_event(payload)
+
+        assert event.reply_to_message_id == "100"
+        assert event.reply_to_text == "bot text"
+        assert event.reply_to_sender == "Bot"
+        assert event.source.thread_id == "100"
 
     @pytest.mark.parametrize("hook_type", ["Join", "Leave", "Like", "Undo"])
     def test_non_create_hooks_are_ignored(self, hook_type):

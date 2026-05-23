@@ -7748,7 +7748,9 @@ class GatewayRunner:
             # multiple times, and without an explicit pointer the agent has to
             # guess (or answer for both subjects). Token overhead is minimal.
             reply_snippet = event.reply_to_text[:500]
-            message_text = f'[Replying to: "{reply_snippet}"]\n\n{message_text}'
+            reply_sender = getattr(event, "reply_to_sender", None)
+            reply_label = f" {reply_sender}" if reply_sender else ""
+            message_text = f'[Replying to{reply_label}: "{reply_snippet}"]\n\n{message_text}'
 
         if "@" in message_text:
             try:

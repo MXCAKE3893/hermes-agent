@@ -473,6 +473,7 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
 
         reply_to_message_id = None
         reply_to_text = None
+        reply_to_sender = None
         in_reply_to = obj.get("inReplyTo") if isinstance(obj.get("inReplyTo"), dict) else {}
         parent_obj = in_reply_to.get("object") if isinstance(in_reply_to.get("object"), dict) else {}
         if parent_obj:
@@ -482,6 +483,16 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
             parent_text, _ = self._parse_content(parent_obj.get("content"))
             reply_to_text = parent_text or None
 
+            # Extract parent actor (sender)
+            parent_actor = in_reply_to.get("actor") or parent_obj.get("actor")
+            if isinstance(parent_actor, dict):
+                parent_actor_id = str(parent_actor.get("id") or "")
+                parent_actor_type = str(parent_actor.get("type") or "")
+                if parent_actor_type == "Application" or parent_actor_id.startswith("bots/"):
+                    reply_to_sender = "Bot"
+                else:
+                    reply_to_sender = str(parent_actor.get("name") or parent_actor.get("id") or "")
+
         source = self.build_source(
             chat_id=chat_id,
             chat_name=str(target.get("name") or chat_id),
@@ -489,6 +500,7 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
             user_id=actor_id or None,
             user_name=str(actor.get("name") or actor_id or ""),
             message_id=str(obj.get("id")) if obj.get("id") is not None else None,
+            thread_id=reply_to_message_id,
         )
         raw_message = dict(payload)
         raw_message["nextcloud_talk"] = {
@@ -503,6 +515,7 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
             message_id=str(obj.get("id")) if obj.get("id") is not None else None,
             reply_to_message_id=reply_to_message_id,
             reply_to_text=reply_to_text,
+            reply_to_sender=reply_to_sender,
         )
 
     def _schedule_message(self, payload: Dict[str, Any], event: MessageEvent) -> None:
