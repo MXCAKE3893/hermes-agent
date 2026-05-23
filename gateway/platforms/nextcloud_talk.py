@@ -201,18 +201,26 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
         raw_response: Any = None
         try:
             chunks = self.truncate_message(content or "", MAX_MESSAGE_LENGTH)
+            # Resolve effective reply target: explicit reply_to takes
+            # precedence, then fall back to metadata thread_id so that
+            # gateway-routed thread replies (progress messages, final
+            # responses) land in the correct Nextcloud Talk thread.
+            effective_reply_to = reply_to
+            if not effective_reply_to and isinstance(metadata, dict):
+                effective_reply_to = metadata.get("thread_id")
+
             for chunk in chunks:
                 payload: dict[str, Any] = {
                     "message": chunk,
                     "referenceId": secrets.token_hex(32),
                 }
-                if reply_to:
+                if effective_reply_to:
                     try:
-                        payload["replyTo"] = int(reply_to)
+                        payload["replyTo"] = int(effective_reply_to)
                     except (TypeError, ValueError):
                         logger.debug(
                             "[nextcloud_talk] Ignoring non-integer reply_to=%r",
-                            reply_to,
+                            effective_reply_to,
                         )
                 body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                 random_header = secrets.token_hex(32)
@@ -500,7 +508,7 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
             user_id=actor_id or None,
             user_name=str(actor.get("name") or actor_id or ""),
             message_id=str(obj.get("id")) if obj.get("id") is not None else None,
-            thread_id=reply_to_message_id,
+            thread_id=None,
         )
         raw_message = dict(payload)
         raw_message["nextcloud_talk"] = {
