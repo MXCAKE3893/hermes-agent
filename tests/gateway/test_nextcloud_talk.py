@@ -9,6 +9,7 @@ import pytest
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig, _apply_env_overrides
 from gateway.platforms.nextcloud_talk import NextcloudTalkAdapter
+from gateway.session import build_session_key
 
 
 SECRET = "super-secret"
@@ -176,7 +177,7 @@ class TestNextcloudTalkParsing:
         assert event.reply_to_message_id == "99"
         assert event.reply_to_text == "parent text"
         assert event.reply_to_sender == "Grace"
-        assert event.source.thread_id is None
+        assert event.source.thread_id == "99"
 
     def test_reply_payload_from_bot_builds_reply_context(self):
         adapter = _make_adapter()
@@ -195,7 +196,26 @@ class TestNextcloudTalkParsing:
         assert event.reply_to_message_id == "100"
         assert event.reply_to_text == "bot text"
         assert event.reply_to_sender == "Bot"
-        assert event.source.thread_id is None
+        assert event.source.thread_id == "100"
+
+    def test_reply_payload_uses_distinct_thread_session_key(self):
+        adapter = _make_adapter()
+        main_event = adapter._build_message_event(_create_payload())
+        reply_payload = _create_payload()
+        reply_payload["object"]["id"] = "1568"
+        reply_payload["object"]["inReplyTo"] = {
+            "actor": {"type": "Person", "id": "users/grace", "name": "Grace"},
+            "object": {
+                "type": "Note",
+                "id": "99",
+                "content": json.dumps({"message": "parent text", "parameters": {}}),
+            },
+        }
+        thread_event = adapter._build_message_event(reply_payload)
+
+        assert main_event.source.thread_id is None
+        assert thread_event.source.thread_id == "99"
+        assert build_session_key(main_event.source) != build_session_key(thread_event.source)
 
     @pytest.mark.parametrize("hook_type", ["Join", "Leave", "Like", "Undo"])
     def test_non_create_hooks_are_ignored(self, hook_type):
@@ -297,8 +317,8 @@ class _FakeSession:
     def __init__(self):
         self.calls = []
 
-    def post(self, url, *, data=None, headers=None):
-        self.calls.append({"url": url, "data": data, "headers": headers})
+    def post(self, url, *, data=None, headers=None, auth=None):
+        self.calls.append({"url": url, "data": data, "headers": headers, "auth": auth})
         return _FakeResponse()
 
 
@@ -328,6 +348,19 @@ class TestNextcloudTalkOutbound:
         assert sent_payload["referenceId"]
 
     @pytest.mark.anyio
+    async def test_outbound_uses_metadata_thread_id_as_reply_target(self):
+        adapter = _make_adapter()
+        fake_session = _FakeSession()
+        adapter._session = fake_session
+
+        result = await adapter.send("room-token", "progress", metadata={"thread_id": "99"})
+
+        assert result.success is True
+        sent_payload = json.loads(fake_session.calls[0]["data"].decode("utf-8"))
+        assert sent_payload["message"] == "progress"
+        assert sent_payload["replyTo"] == 99
+
+    @pytest.mark.anyio
     async def test_outbound_can_use_backend_learned_from_webhook(self):
         adapter = _make_adapter(base_url="")
         fake_session = _FakeSession()
@@ -338,3 +371,23 @@ class TestNextcloudTalkOutbound:
 
         assert result.success is True
         assert fake_session.calls[0]["url"] == "https://learned.example/ocs/v2.php/apps/spreed/api/v1/bot/room-token/message"
+
+    @pytest.mark.anyio
+    async def test_file_share_uses_metadata_thread_id_as_reply_target(self):
+        adapter = _make_adapter()
+        fake_session = _FakeSession()
+
+        result = await adapter._share_file(
+            session=fake_session,
+            auth=None,
+            base_url="https://nextcloud.example.com",
+            chat_id="room-token",
+            nextcloud_path="/Hermes Agent/demo.txt",
+            caption=None,
+            reply_to=None,
+            metadata={"thread_id": "99"},
+        )
+
+        assert result.success is True
+        sent_data = fake_session.calls[0]["data"]
+        assert json.loads(sent_data["talkMetaData"])["replyTo"] == 99

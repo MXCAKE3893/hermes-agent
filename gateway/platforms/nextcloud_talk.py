@@ -205,9 +205,7 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
             # precedence, then fall back to metadata thread_id so that
             # gateway-routed thread replies (progress messages, final
             # responses) land in the correct Nextcloud Talk thread.
-            effective_reply_to = reply_to
-            if not effective_reply_to and isinstance(metadata, dict):
-                effective_reply_to = metadata.get("thread_id")
+            effective_reply_to = self._effective_reply_to(reply_to, metadata)
 
             for chunk in chunks:
                 payload: dict[str, Any] = {
@@ -454,6 +452,20 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
         )
         return digest.hexdigest()
 
+    @staticmethod
+    def _effective_reply_to(
+        reply_to: Optional[str],
+        metadata: Optional[Dict[str, Any]],
+    ) -> Optional[str]:
+        """Return the Nextcloud Talk reply target for threaded delivery."""
+        if reply_to:
+            return reply_to
+        if isinstance(metadata, dict):
+            thread_id = metadata.get("thread_id")
+            if thread_id:
+                return str(thread_id)
+        return None
+
     def _build_message_event(
         self,
         payload: Dict[str, Any],
@@ -508,7 +520,7 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
             user_id=actor_id or None,
             user_name=str(actor.get("name") or actor_id or ""),
             message_id=str(obj.get("id")) if obj.get("id") is not None else None,
-            thread_id=None,
+            thread_id=reply_to_message_id,
         )
         raw_message = dict(payload)
         raw_message["nextcloud_talk"] = {
@@ -620,11 +632,15 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
         talk_metadata: dict[str, Any] = {}
         if caption:
             talk_metadata["caption"] = caption[:MAX_MESSAGE_LENGTH]
-        if reply_to:
+        effective_reply_to = self._effective_reply_to(reply_to, metadata)
+        if effective_reply_to:
             try:
-                talk_metadata["replyTo"] = int(reply_to)
+                talk_metadata["replyTo"] = int(effective_reply_to)
             except (TypeError, ValueError):
-                logger.debug("[nextcloud_talk] Ignoring non-integer file reply_to=%r", reply_to)
+                logger.debug(
+                    "[nextcloud_talk] Ignoring non-integer file reply_to=%r",
+                    effective_reply_to,
+                )
         data: dict[str, str] = {
             "shareType": "10",
             "shareWith": str(chat_id),
