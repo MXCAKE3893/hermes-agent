@@ -513,6 +513,8 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
                 else:
                     reply_to_sender = str(parent_actor.get("name") or parent_actor.get("id") or "")
 
+        thread_id = obj.get("threadId")
+
         source = self.build_source(
             chat_id=chat_id,
             chat_name=str(target.get("name") or chat_id),
@@ -520,7 +522,7 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
             user_id=actor_id or None,
             user_name=str(actor.get("name") or actor_id or ""),
             message_id=str(obj.get("id")) if obj.get("id") is not None else None,
-            thread_id=reply_to_message_id,
+            thread_id=str(thread_id) if thread_id is not None else None,
         )
         raw_message = dict(payload)
         raw_message["nextcloud_talk"] = {

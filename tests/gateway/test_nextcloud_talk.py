@@ -177,7 +177,7 @@ class TestNextcloudTalkParsing:
         assert event.reply_to_message_id == "99"
         assert event.reply_to_text == "parent text"
         assert event.reply_to_sender == "Grace"
-        assert event.source.thread_id == "99"
+        assert event.source.thread_id is None
 
     def test_reply_payload_from_bot_builds_reply_context(self):
         adapter = _make_adapter()
@@ -196,14 +196,14 @@ class TestNextcloudTalkParsing:
         assert event.reply_to_message_id == "100"
         assert event.reply_to_text == "bot text"
         assert event.reply_to_sender == "Bot"
-        assert event.source.thread_id == "100"
+        assert event.source.thread_id is None
 
-    def test_reply_payload_uses_distinct_thread_session_key(self):
+    def test_quote_payload_keeps_main_session_key(self):
         adapter = _make_adapter()
         main_event = adapter._build_message_event(_create_payload())
-        reply_payload = _create_payload()
-        reply_payload["object"]["id"] = "1568"
-        reply_payload["object"]["inReplyTo"] = {
+        quote_payload = _create_payload()
+        quote_payload["object"]["id"] = "1568"
+        quote_payload["object"]["inReplyTo"] = {
             "actor": {"type": "Person", "id": "users/grace", "name": "Grace"},
             "object": {
                 "type": "Note",
@@ -211,10 +211,21 @@ class TestNextcloudTalkParsing:
                 "content": json.dumps({"message": "parent text", "parameters": {}}),
             },
         }
-        thread_event = adapter._build_message_event(reply_payload)
+        quote_event = adapter._build_message_event(quote_payload)
 
         assert main_event.source.thread_id is None
-        assert thread_event.source.thread_id == "99"
+        assert quote_event.source.thread_id is None
+        assert build_session_key(main_event.source) == build_session_key(quote_event.source)
+
+    def test_thread_payload_uses_distinct_thread_session_key(self):
+        adapter = _make_adapter()
+        main_event = adapter._build_message_event(_create_payload())
+        thread_payload = _create_payload()
+        thread_payload["object"]["id"] = "3059"
+        thread_payload["object"]["threadId"] = 3059
+        thread_event = adapter._build_message_event(thread_payload)
+
+        assert thread_event.source.thread_id == "3059"
         assert build_session_key(main_event.source) != build_session_key(thread_event.source)
 
     @pytest.mark.parametrize("hook_type", ["Join", "Leave", "Like", "Undo"])
