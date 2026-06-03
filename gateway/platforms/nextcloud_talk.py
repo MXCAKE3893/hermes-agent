@@ -144,6 +144,54 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
         parameters = parsed.get("parameters")
         return str(message or ""), parameters if isinstance(parameters, dict) else {}
 
+    @staticmethod
+    def _attachment_hints(parameters: dict[str, Any]) -> list[dict[str, str]]:
+        hints: list[dict[str, str]] = []
+        for value in parameters.values():
+            if not isinstance(value, dict):
+                continue
+            attachment_type = str(value.get("type") or "")
+            if attachment_type not in {"file", "talk-attachment"}:
+                continue
+
+            hint: dict[str, str] = {"type": attachment_type}
+            for key in ("name", "mimetype", "size", "path", "link", "id", "conversation"):
+                candidate = value.get(key)
+                if candidate not in (None, ""):
+                    hint[key] = str(candidate)
+            hints.append(hint)
+        return hints
+
+    @staticmethod
+    def _format_attachment_hint(hints: list[dict[str, str]]) -> str:
+        if not hints:
+            return ""
+
+        lines = ["[Nextcloud Talk attachment detected."]
+        for index, hint in enumerate(hints, start=1):
+            name = hint.get("name") or hint.get("id") or "unknown attachment"
+            details = [f'"{name}"']
+            if hint.get("mimetype"):
+                details.append(hint["mimetype"])
+            if hint.get("size"):
+                details.append(f'{hint["size"]} bytes')
+            lines.append(f"Attachment {index}: " + " (" + ", ".join(details) + ").")
+
+            metadata_path = hint.get("path")
+            if metadata_path:
+                normalized = metadata_path if metadata_path.startswith("/") else f"/{metadata_path}"
+                lines.append(f"Metadata path candidate: {normalized}.")
+            elif hint.get("name"):
+                safe_name = hint["name"].replace("/", "_").replace("\\", "_")
+                lines.append(f"Likely sender-side Nextcloud Files path candidate: /Talk/{safe_name}.")
+            if hint.get("link"):
+                lines.append(f'Metadata link candidate: {hint["link"]}.')
+
+        lines.append(
+            "Hermes has not downloaded the file automatically; use configured Nextcloud file credentials if available, otherwise ask the user to share the file path or link.]"
+        )
+        return "\n".join(lines)
+
     def set_message_scheduler(self, scheduler: Optional[MessageScheduler]) -> None:
         self._message_scheduler = scheduler
 
@@ -488,6 +536,9 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
             self._backend_by_conversation[chat_id] = backend
 
         text, parameters = self._parse_content(obj.get("content"))
+        attachment_note = self._format_attachment_hint(self._attachment_hints(parameters))
+        if attachment_note:
+            text = f"{attachment_note}\n\n{text}" if text.strip() else attachment_note
         if not text.strip():
             return None
 

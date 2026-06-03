@@ -8,6 +8,7 @@ import json
 import pytest
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig, _apply_env_overrides
+from gateway.platforms.base import MessageType
 from gateway.platforms.nextcloud_talk import NextcloudTalkAdapter
 from gateway.session import build_session_key
 
@@ -227,6 +228,117 @@ class TestNextcloudTalkParsing:
 
         assert thread_event.source.thread_id == "3059"
         assert build_session_key(main_event.source) != build_session_key(thread_event.source)
+
+    def test_file_parameter_adds_attachment_hint_without_thread_session(self):
+        adapter = _make_adapter()
+        main_event = adapter._build_message_event(_create_payload())
+        payload = _create_payload()
+        payload["object"]["content"] = json.dumps(
+            {
+                "message": "{file}",
+                "parameters": {
+                    "file": {
+                        "type": "file",
+                        "name": "report.pdf",
+                        "mimetype": "application/pdf",
+                        "size": 1234,
+                    }
+                },
+            }
+        )
+
+        event = adapter._build_message_event(payload)
+
+        assert event is not None
+        assert event.message_type == MessageType.TEXT
+        assert "Nextcloud Talk attachment detected" in event.text
+        assert "report.pdf" in event.text
+        assert "application/pdf" in event.text
+        assert "/Talk/report.pdf" in event.text
+        assert event.source.thread_id is None
+        assert build_session_key(main_event.source) == build_session_key(event.source)
+
+    def test_talk_attachment_parameter_adds_hint(self):
+        adapter = _make_adapter()
+        payload = _create_payload()
+        payload["object"]["content"] = json.dumps(
+            {
+                "message": "{attachment}",
+                "parameters": {
+                    "attachment": {
+                        "type": "talk-attachment",
+                        "name": "image.png",
+                        "mimetype": "image/png",
+                        "conversation": "room-token",
+                    }
+                },
+            }
+        )
+
+        event = adapter._build_message_event(payload)
+
+        assert event is not None
+        assert "image.png" in event.text
+        assert "image/png" in event.text
+
+    def test_attachment_hint_prefers_metadata_path(self):
+        adapter = _make_adapter()
+        payload = _create_payload()
+        payload["object"]["content"] = json.dumps(
+            {
+                "message": "{file}",
+                "parameters": {
+                    "file": {
+                        "type": "file",
+                        "name": "report.pdf",
+                        "path": "Documents/report.pdf",
+                    }
+                },
+            }
+        )
+
+        event = adapter._build_message_event(payload)
+
+        assert event is not None
+        assert "Metadata path candidate: /Documents/report.pdf" in event.text
+        assert "/Talk/report.pdf" not in event.text
+
+    def test_attachment_only_payload_is_not_dropped(self):
+        adapter = _make_adapter()
+        payload = _create_payload()
+        payload["object"]["content"] = json.dumps(
+            {
+                "message": "",
+                "parameters": {
+                    "file": {
+                        "type": "file",
+                        "name": "notes.txt",
+                        "mimetype": "text/plain",
+                    }
+                },
+            }
+        )
+
+        event = adapter._build_message_event(payload)
+
+        assert event is not None
+        assert "Nextcloud Talk attachment detected" in event.text
+        assert "notes.txt" in event.text
+
+    def test_unexpected_parameters_do_not_add_attachment_hint(self):
+        adapter = _make_adapter()
+        payload = _create_payload()
+        payload["object"]["content"] = json.dumps(
+            {
+                "message": "hello",
+                "parameters": {"x": {"type": "call", "name": "Company call"}},
+            }
+        )
+
+        event = adapter._build_message_event(payload)
+
+        assert event is not None
+        assert event.text == "hello"
 
     @pytest.mark.parametrize("hook_type", ["Join", "Leave", "Like", "Undo"])
     def test_non_create_hooks_are_ignored(self, hook_type):
