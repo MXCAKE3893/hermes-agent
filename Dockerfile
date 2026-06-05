@@ -58,16 +58,16 @@ ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLA
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-symlinks-noarch.tar.xz /tmp/
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
-        amd64) s6_arch="x86_64"; s6_arch_sha="${S6_OVERLAY_X86_64_SHA256}" ;; \
-        arm64) s6_arch="aarch64"; s6_arch_sha="${S6_OVERLAY_AARCH64_SHA256}" ;; \
-        *) echo "Unsupported TARGETARCH=${TARGETARCH} for s6-overlay" >&2; exit 1 ;; \
+    amd64) s6_arch="x86_64"; s6_arch_sha="${S6_OVERLAY_X86_64_SHA256}" ;; \
+    arm64) s6_arch="aarch64"; s6_arch_sha="${S6_OVERLAY_AARCH64_SHA256}" ;; \
+    *) echo "Unsupported TARGETARCH=${TARGETARCH} for s6-overlay" >&2; exit 1 ;; \
     esac; \
     curl -fsSL --retry 3 -o /tmp/s6-overlay-arch.tar.xz \
-        "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${s6_arch}.tar.xz"; \
+    "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${s6_arch}.tar.xz"; \
     { \
-        printf '%s  %s\n' "${S6_OVERLAY_NOARCH_SHA256}" /tmp/s6-overlay-noarch.tar.xz; \
-        printf '%s  %s\n' "${s6_arch_sha}" /tmp/s6-overlay-arch.tar.xz; \
-        printf '%s  %s\n' "${S6_OVERLAY_SYMLINKS_SHA256}" /tmp/s6-overlay-symlinks-noarch.tar.xz; \
+    printf '%s  %s\n' "${S6_OVERLAY_NOARCH_SHA256}" /tmp/s6-overlay-noarch.tar.xz; \
+    printf '%s  %s\n' "${s6_arch_sha}" /tmp/s6-overlay-arch.tar.xz; \
+    printf '%s  %s\n' "${S6_OVERLAY_SYMLINKS_SHA256}" /tmp/s6-overlay-symlinks-noarch.tar.xz; \
     } > /tmp/s6-overlay.sha256; \
     sha256sum -c /tmp/s6-overlay.sha256; \
     tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz; \
@@ -104,6 +104,11 @@ RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && 
 
 WORKDIR /opt/hermes
 
+# Build dependency trees as the runtime user so .venv/node_modules ownership is
+# correct without an expensive end-of-build recursive chown over /opt/hermes.
+RUN chown hermes:hermes /opt/hermes
+USER hermes
+
 # ---------- Layer-cached dependency install ----------
 # Copy only package manifests first so npm install + Playwright are cached
 # unless the lockfiles themselves change.
@@ -112,10 +117,10 @@ WORKDIR /opt/hermes
 # because it is referenced as a `file:` workspace dependency from
 # ui-tui/package.json.  Copying the tree up front lets npm resolve the
 # workspace to real content instead of stopping at a bare package.json.
-COPY package.json package-lock.json ./
-COPY web/package.json web/
-COPY ui-tui/package.json ui-tui/
-COPY ui-tui/packages/hermes-ink/ ui-tui/packages/hermes-ink/
+COPY --chown=hermes:hermes package.json package-lock.json ./
+COPY --chown=hermes:hermes web/package.json web/
+COPY --chown=hermes:hermes ui-tui/package.json ui-tui/
+COPY --chown=hermes:hermes ui-tui/packages/hermes-ink/ ui-tui/packages/hermes-ink/
 
 # `npm_config_install_links=false` forces npm to install `file:` deps as
 # symlinks instead of copies.  This is the default since npm 10+, which is
@@ -129,12 +134,9 @@ COPY ui-tui/packages/hermes-ink/ ui-tui/packages/hermes-ink/
 # guards against a future regression if the source npm version changes.
 ENV npm_config_install_links=false
 
-RUN chown -R hermes:hermes /opt/hermes
-USER hermes
 RUN npm install --prefer-offline --no-audit && \
     (cd web && npm install --prefer-offline --no-audit) && \
     (cd ui-tui && npm install --prefer-offline --no-audit) && \
-    npx playwright install --with-deps chromium --only-shell && \
     npm cache clean --force
 USER root
 RUN npx playwright install --with-deps chromium --only-shell
@@ -171,7 +173,7 @@ RUN npx playwright install --with-deps chromium --only-shell
 # `ModuleNotFoundError: No module named 'hindsight_client'` (#38128).
 #
 # The editable link is created after the source copy below.
-COPY pyproject.toml uv.lock ./
+COPY --chown=hermes:hermes pyproject.toml uv.lock ./
 RUN touch ./README.md
 USER hermes
 RUN uv sync --frozen --no-install-project --extra all --extra messaging --extra anthropic --extra bedrock --extra azure-identity
@@ -213,6 +215,8 @@ RUN chmod -R a+rX /opt/hermes && \
 USER hermes
 RUN uv pip install --no-cache-dir --no-deps -e "."
 
+USER root
+
 # ---------- Bake build-time git revision ----------
 # .dockerignore excludes .git, so `git rev-parse HEAD` from inside the
 # container always returns nothing — meaning `hermes dump` reports
@@ -232,8 +236,8 @@ RUN uv pip install --no-cache-dir --no-deps -e "."
 # every published image has it.
 ARG HERMES_GIT_SHA=
 RUN if [ -n "${HERMES_GIT_SHA}" ]; then \
-        printf '%s\n' "${HERMES_GIT_SHA}" > /opt/hermes/.hermes_build_sha && \
-        chown hermes:hermes /opt/hermes/.hermes_build_sha; \
+    printf '%s\n' "${HERMES_GIT_SHA}" > /opt/hermes/.hermes_build_sha && \
+    chown hermes:hermes /opt/hermes/.hermes_build_sha; \
     fi
 
 # ---------- s6-overlay service wiring ----------
@@ -254,7 +258,7 @@ COPY docker/s6-rc.d/ /etc/s6-overlay/s6-rc.d/
 # (the /run/service/ scandir is tmpfs and wiped on restart). Phase 4.
 RUN mkdir -p /etc/cont-init.d && \
     printf '#!/command/with-contenv sh\nexec /opt/hermes/docker/stage2-hook.sh\n' \
-        > /etc/cont-init.d/01-hermes-setup && \
+    > /etc/cont-init.d/01-hermes-setup && \
     chmod +x /etc/cont-init.d/01-hermes-setup
 COPY --chmod=0755 docker/cont-init.d/015-supervise-perms /etc/cont-init.d/015-supervise-perms
 COPY --chmod=0755 docker/cont-init.d/02-reconcile-profiles /etc/cont-init.d/02-reconcile-profiles

@@ -103,16 +103,19 @@ validate_uid_gid() {
 # HERMES_GID still win when both are set.  See #15290, salvages #25872.
 HERMES_UID="${HERMES_UID:-${PUID:-}}"
 HERMES_GID="${HERMES_GID:-${PGID:-}}"
+install_tree_needs_chown=false
 
 if [ -n "${HERMES_UID:-}" ] && validate_uid_gid "$HERMES_UID" && [ "$HERMES_UID" != "$(id -u hermes)" ]; then
     echo "[stage2] Changing hermes UID to $HERMES_UID"
     usermod -u "$HERMES_UID" hermes
+    install_tree_needs_chown=true
 fi
 if [ -n "${HERMES_GID:-}" ] && validate_uid_gid "$HERMES_GID" && [ "$HERMES_GID" != "$(id -g hermes)" ]; then
     echo "[stage2] Changing hermes GID to $HERMES_GID"
     # -o allows non-unique GID (e.g. macOS GID 20 "staff" may already
     # exist as "dialout" in the Debian-based container image).
     groupmod -o -g "$HERMES_GID" hermes 2>/dev/null || true
+    install_tree_needs_chown=true
 fi
 
 # --- Docker socket group membership (docker-in-docker / DooD) ---
