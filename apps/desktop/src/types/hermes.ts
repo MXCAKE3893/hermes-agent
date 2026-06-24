@@ -47,6 +47,11 @@ export interface OAuthProviderStatus {
 
 export interface OAuthProvider {
   cli_command: string
+  /** Shell command that clears an external provider's credentials, run in the
+   *  embedded terminal. Null when Hermes doesn't know how to remove it. */
+  disconnect_command?: null | string
+  disconnect_hint?: null | string
+  disconnectable?: boolean
   docs_url: string
   flow: 'device_code' | 'external' | 'loopback' | 'pkce'
   id: string
@@ -93,6 +98,13 @@ export interface OAuthPollResponse {
   status: 'approved' | 'denied' | 'error' | 'expired' | 'pending'
 }
 
+export interface MemoryProviderOAuthStatus {
+  auth: 'apikey' | 'oauth' | null
+  connected: boolean
+  detail: string
+  state: 'connected' | 'error' | 'idle' | 'pending'
+}
+
 export interface EnvVarInfo {
   advanced: boolean
   category: string
@@ -103,9 +115,40 @@ export interface EnvVarInfo {
   description: string
   is_password: boolean
   is_set: boolean
+  // Backend-derived provider grouping hints (from the unified provider catalog
+  // in hermes_cli/provider_catalog.py). When present, the Keys tab groups by
+  // this provider identity — the SAME one `hermes model` uses — instead of
+  // desktop-only env-var prefix guesses. Empty for non-provider env vars.
+  provider?: string
+  provider_label?: string
   redacted_value: null | string
   tools: string[]
   url: null | string
+}
+
+export type MemoryProviderFieldKind = 'secret' | 'select' | 'text'
+
+export interface MemoryProviderFieldOption {
+  description: string
+  label: string
+  value: string
+}
+
+export interface MemoryProviderField {
+  description: string
+  is_set: boolean
+  key: string
+  kind: MemoryProviderFieldKind
+  label: string
+  options: MemoryProviderFieldOption[]
+  placeholder: string
+  value: string
+}
+
+export interface MemoryProviderConfig {
+  fields: MemoryProviderField[]
+  label: string
+  name: string
 }
 
 export interface MessagingEnvVarInfo {
@@ -213,6 +256,18 @@ export interface ModelOptionProvider {
   slug: string
   total_models?: number
   warning?: string
+  /** True when the provider has usable credentials. False for canonical
+   *  providers surfaced by `include_unconfigured` that the user hasn't set up
+   *  yet — render these with a setup affordance instead of hiding them. */
+  authenticated?: boolean
+  /** Auth flow for an unconfigured provider: "api_key" can be activated inline
+   *  by pasting `key_env`; anything else (oauth_*, external, aws_sdk, …) needs
+   *  the `hermes model` CLI / onboarding OAuth flow. */
+  auth_type?: string
+  /** Env var to paste an API key into, for unconfigured `api_key` providers. */
+  key_env?: string
+  /** True for providers defined via the user's `providers:` config block. */
+  is_user_defined?: boolean
   /** Per-model pricing keyed by model id (present when the picker requested
    *  pricing and the provider supports live pricing). */
   pricing?: Record<string, ModelPricing>
@@ -285,6 +340,14 @@ export interface SessionInfo {
   started_at: number
   title: null | string
   tool_call_count: number
+  /** Origin platform when this session was handed off from a messaging
+   *  platform (e.g. a Telegram thread continued in the desktop app). The live
+   *  {@link source} becomes local (tui/desktop) after a handoff, so the origin
+   *  is preserved here to surface the platform badge on the row. */
+  handoff_platform?: null | string
+  /** Handoff lifecycle: 'pending' | 'in_progress' | 'completed' | 'failed'. */
+  handoff_state?: null | string
+  handoff_error?: null | string
   /** Owning profile name, set by the cross-profile aggregator
    *  (`/api/profiles/sessions`). Absent on legacy single-profile responses,
    *  which the UI treats as the default profile. */
@@ -450,7 +513,7 @@ export interface CronJobUpdates {
 
 export interface ProfileCreatePayload {
   clone_all?: boolean
-  clone_from?: string
+  clone_from?: null | string
   clone_from_default?: boolean
   name: string
   no_skills?: boolean
@@ -464,6 +527,10 @@ export interface ProfileInfo {
   path: string
   provider: null | string
   skill_count: number
+}
+
+export interface ProfileSetupCommand {
+  command: string
 }
 
 export interface ProfileSoul {
@@ -517,6 +584,51 @@ export interface ToolsetConfig {
   providers: ToolProvider[]
   /** Name of the currently active provider, or null if none is configured. */
   active_provider: string | null
+}
+
+/** Shape of `GET /api/tools/computer-use/status`.
+ *
+ *  cua-driver runs on macOS, Windows, and Linux. `ready` is the single OS-aware
+ *  readiness signal: on macOS both TCC grants (Accessibility + Screen
+ *  Recording, which attach to cua-driver's own `com.trycua.driver` identity,
+ *  not Hermes); elsewhere, driver health from `cua-driver doctor`. `null`
+ *  means unknown (binary missing / probe failed). */
+export interface ComputerUsePermissionSource {
+  attribution?: string
+  executable?: string
+  note?: string
+  pid?: number
+  responsible_ppid?: number
+}
+
+export interface ComputerUseCheck {
+  label: string
+  status: string
+  message: string
+}
+
+export interface ComputerUseStatus {
+  /** `sys.platform`: "darwin" | "win32" | "linux" | ... */
+  platform: string
+  /** cua-driver has a runtime backend for this platform. */
+  platform_supported: boolean
+  /** cua-driver binary resolved on PATH. */
+  installed: boolean
+  /** e.g. "cua-driver 0.5.1", or null when unknown. */
+  version: string | null
+  /** Unified readiness — both TCC grants (macOS) or driver health (else). */
+  ready: boolean | null
+  /** Whether a permission grant flow exists (macOS-only TCC). */
+  can_grant: boolean
+  /** Cross-platform `cua-driver doctor` probes. */
+  checks: ComputerUseCheck[]
+  /** macOS TCC detail — `null` off macOS or when unknown. */
+  accessibility: boolean | null
+  screen_recording: boolean | null
+  screen_recording_capturable: boolean | null
+  source: ComputerUsePermissionSource | null
+  /** Populated when the status probe itself failed. */
+  error: string | null
 }
 
 export interface SessionSearchResult {
@@ -580,6 +692,27 @@ export interface ActionStatusResponse {
   running: boolean
 }
 
+export interface BackendUpdateCommit {
+  sha: string
+  summary: string
+  author: string
+  at: number
+}
+
+/** Shape of `GET /api/hermes/update/check` — the backend's own update state.
+ *  Used by the desktop's remote update overlay so the backend version (not the
+ *  Electron client clone) drives "what's changed + Install" in remote mode. */
+export interface BackendUpdateCheckResponse {
+  install_method: string
+  current_version: string
+  behind: number | null
+  update_available: boolean
+  can_apply: boolean
+  update_command: string | null
+  message: string | null
+  commits?: BackendUpdateCommit[]
+}
+
 export interface AuxiliaryTaskAssignment {
   base_url: string
   model: string
@@ -593,6 +726,10 @@ export interface AuxiliaryModelsResponse {
 }
 
 export interface ModelAssignmentRequest {
+  /** Optional API key for a custom/local endpoint. Persisted to model.api_key
+   *  (where the runtime reads it) for self-hosted endpoints that require auth.
+   *  Only honored for custom/local providers on the main slot. */
+  api_key?: string
   /** OpenAI-compatible endpoint URL. Only honored for custom/local providers
    *  on the main slot — wires a self-hosted endpoint into runtime resolution. */
   base_url?: string
@@ -600,6 +737,14 @@ export interface ModelAssignmentRequest {
   provider: string
   scope: 'main' | 'auxiliary'
   task?: string
+}
+
+/** An auxiliary task still pinned to a provider that differs from the
+ *  newly-selected main provider after a main-model switch. */
+export interface StaleAuxAssignment {
+  task: string
+  provider: string
+  model: string
 }
 
 export interface ModelAssignmentResponse {
@@ -614,5 +759,9 @@ export interface ModelAssignmentResponse {
   provider?: string
   reset?: boolean
   scope?: string
+  /** Auxiliary slots still pinned to a different provider than the new main.
+   *  Switching main never clears aux pins; this lets the UI warn the user
+   *  their helper tasks aren't following the switch. Only set on scope:'main'. */
+  stale_aux?: StaleAuxAssignment[]
   tasks?: string[]
 }
