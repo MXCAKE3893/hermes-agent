@@ -5458,32 +5458,84 @@ class AIAgent:
         from agent.chat_completion_helpers import build_assistant_message
         return build_assistant_message(self, assistant_message, finish_reason)
 
+    def _should_replay_reasoning_content(self) -> bool:
+        """Return True if the current config or provider options require replaying past reasoning_content.
+
+        Checks:
+        1. extra_body.chat_template_kwargs.preserve_thinking == True
+        2. extra_body.reasoning_replay == True
+        3. Explicit self.reasoning_replay == True (from model.reasoning_replay config)
+        4. Matching custom_provider entry has preserve_thinking or reasoning_replay enabled.
+        """
+        extra_body = {}
+        if hasattr(self, "request_overrides") and isinstance(self.request_overrides, dict):
+            overrides_extra = self.request_overrides.get("extra_body")
+            if isinstance(overrides_extra, dict):
+                extra_body.update(overrides_extra)
+
+        # Merge provider profile defaults if available
+        from providers import get_provider_profile
+        profile = get_provider_profile(self.provider)
+        if profile:
+            profile_body = profile.build_extra_body(
+                session_id=self.session_id,
+                model=self.model,
+                base_url=self.base_url,
+                reasoning_config=self.reasoning_config,
+            )
+            if profile_body:
+                extra_body.update(profile_body)
+            extras, _ = profile.build_api_kwargs_extras(
+                reasoning_config=self.reasoning_config,
+                model=self.model,
+                base_url=self.base_url,
+            )
+            if extras:
+                extra_body.update(extras)
+
+        # Check resolved extra_body keys
+        chat_template_kwargs = extra_body.get("chat_template_kwargs", {})
+        if isinstance(chat_template_kwargs, dict) and chat_template_kwargs.get("preserve_thinking") is True:
+            return True
+        if extra_body.get("reasoning_replay") is True:
+            return True
+
+        # Check explicit setting from agent init
+        if getattr(self, "reasoning_replay", False) is True:
+            return True
+
+        # Check custom_providers config list
+        custom_providers = getattr(self, "_custom_providers", None)
+        if custom_providers:
+            from agent.agent_init import _custom_provider_extra_body_for_agent
+            entry_extra = _custom_provider_extra_body_for_agent(
+                provider=self.provider,
+                model=self.model,
+                base_url=self.base_url,
+                custom_providers=custom_providers,
+            )
+            if isinstance(entry_extra, dict):
+                if entry_extra.get("reasoning_replay") is True:
+                    return True
+                ctk = entry_extra.get("chat_template_kwargs", {})
+                if isinstance(ctk, dict) and ctk.get("preserve_thinking") is True:
+                    return True
+
+        return False
+
     def _needs_thinking_reasoning_pad(self) -> bool:
         """Return True when the active provider enforces reasoning_content echo-back.
 
         DeepSeek v4 thinking and Kimi / Moonshot thinking both reject replays
         of assistant tool-call messages that omit ``reasoning_content`` (refs
         #15250, #17400). Xiaomi MiMo thinking mode has the same requirement.
-
-        Result cached on the AIAgent instance keyed by (provider, model,
-        base_url); invalidated whenever ``switch_model()`` /
-        ``_try_activate_fallback()`` mutate any of those. This is hot — the
-        agent loop hits ~16 invocations per turn, each of which would
-        otherwise re-run ~5 ``base_url_host_matches`` (and therefore
-        ``urlparse``) calls under it. Caching drops the per-turn cost from
-        ~5us × 16 = ~80us to <1us.
         """
-        key = (self.provider, self.model, getattr(self, "_base_url_lower", self.base_url))
-        cached = getattr(self, "_thinking_pad_cache", None)
-        if cached is not None and cached[0] == key:
-            return cached[1]
-        result = (
+        return (
             self._needs_deepseek_tool_reasoning()
             or self._needs_kimi_tool_reasoning()
             or self._needs_mimo_tool_reasoning()
         )
-        self._thinking_pad_cache = (key, result)
-        return result
+
 
     def _needs_kimi_tool_reasoning(self) -> bool:
         """Return True when the current provider is Kimi / Moonshot thinking mode.

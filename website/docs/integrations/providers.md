@@ -814,6 +814,44 @@ You can verify tool support is active by checking `http://localhost:8080/props` 
 Download GGUF models from [Hugging Face](https://huggingface.co/models?library=gguf). Q4_K_M quantization offers the best balance of quality vs. memory usage.
 :::
 
+:::tip Thinking models (Qwen3.6, QwQ, etc.) — preserving reasoning across turns
+Thinking models like Qwen3.6 emit `reasoning_content` in their API responses. To preserve this reasoning across multi-turn conversations (so the model can see its own past chain-of-thought), two things are needed:
+
+**1. Server side:** Pass `preserve_thinking: true` via `chat_template_kwargs` so llama-server re-renders past thinking blocks in the chat template:
+
+```yaml
+# ~/.hermes/config.yaml
+model:
+  extra_body:
+    chat_template_kwargs:
+      preserve_thinking: true
+```
+
+**2. Client side (automatic):** Hermes detects `preserve_thinking: true` and automatically replays `reasoning_content` from conversation history on subsequent API requests. No additional client-side config is needed.
+
+Alternatively, you can enable reasoning replay globally via the `reasoning_replay` config key (useful when the server expects reasoning replay but doesn't use `chat_template_kwargs`):
+
+```yaml
+# ~/.hermes/config.yaml
+model:
+  reasoning_replay: true
+```
+
+Or set it per custom provider:
+
+```yaml
+# ~/.hermes/config.yaml
+custom_providers:
+  - name: my-local-qwen
+    base_url: http://localhost:8080/v1
+    extra_body:
+      chat_template_kwargs:
+        preserve_thinking: true
+```
+
+**How it works:** When enabled, Hermes stores `reasoning_content` from each assistant response in the session database, reloads it when resuming sessions, and includes it in the `messages` array sent on subsequent `/v1/chat/completions` requests. Empty-string `reasoning_content` (`""`) is preserved as-is — it is NOT padded to a space unless a DeepSeek/Kimi/MiMo provider specifically requires padding.
+:::
+
 ---
 
 ### LM Studio — Desktop App with Local Models

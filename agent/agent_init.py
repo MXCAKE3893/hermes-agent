@@ -1629,6 +1629,11 @@ def init_agent(
                 )
     agent._session_init_model_config["max_tokens"] = agent.max_tokens
 
+    # Read reasoning_replay option from model config
+    agent.reasoning_replay = False
+    if isinstance(_model_cfg, dict):
+        agent.reasoning_replay = _model_cfg.get("reasoning_replay") is True
+
     # Read explicit context_length override from model config
     if isinstance(_model_cfg, dict):
         _config_context_length = _model_cfg.get("context_length")
