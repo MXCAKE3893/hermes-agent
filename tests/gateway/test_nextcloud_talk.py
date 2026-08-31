@@ -114,6 +114,12 @@ class TestNextcloudTalkConfig:
         assert cfg.extra["port"] == 8650
         assert cfg.extra["webhook_path"] == "talk-hook"
 
+    @pytest.mark.anyio
+    async def test_connect_accepts_reconnect_flag(self):
+        adapter = NextcloudTalkAdapter(PlatformConfig(enabled=True, extra={}))
+
+        assert await adapter.connect(is_reconnect=True) is False
+
 
 class TestNextcloudTalkSignatures:
     def test_inbound_signature_verifies_random_plus_raw_body(self):

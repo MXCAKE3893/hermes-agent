@@ -195,7 +195,7 @@ class NextcloudTalkAdapter(BasePlatformAdapter):
     def set_message_scheduler(self, scheduler: Optional[MessageScheduler]) -> None:
         self._message_scheduler = scheduler
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
         if not self._secret:
             logger.error("[nextcloud_talk] shared bot secret is required")
             return False
