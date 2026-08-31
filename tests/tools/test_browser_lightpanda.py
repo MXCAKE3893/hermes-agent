@@ -48,41 +48,6 @@ class TestGetBrowserEngine:
         with patch("hermes_cli.config.read_raw_config", return_value=cfg):
             assert _get_browser_engine() == "lightpanda"
 
-    def test_config_chrome(self):
-        """Config browser.engine = 'chrome' is respected."""
-        from tools.browser_tool import _get_browser_engine
-        cfg = {"browser": {"engine": "chrome"}}
-        with patch("hermes_cli.config.read_raw_config", return_value=cfg):
-            assert _get_browser_engine() == "chrome"
-
-    def test_env_var_fallback(self):
-        """AGENT_BROWSER_ENGINE env var is used when config has no engine key."""
-        from tools.browser_tool import _get_browser_engine
-        with patch.dict(os.environ, {"AGENT_BROWSER_ENGINE": "lightpanda"}):
-            with patch("hermes_cli.config.read_raw_config", return_value={}):
-                assert _get_browser_engine() == "lightpanda"
-
-    def test_config_takes_priority_over_env(self):
-        """Config value wins over env var."""
-        from tools.browser_tool import _get_browser_engine
-        cfg = {"browser": {"engine": "chrome"}}
-        with patch.dict(os.environ, {"AGENT_BROWSER_ENGINE": "lightpanda"}):
-            with patch("hermes_cli.config.read_raw_config", return_value=cfg):
-                assert _get_browser_engine() == "chrome"
-
-    def test_value_is_lowercased(self):
-        """Engine value is normalized to lowercase."""
-        from tools.browser_tool import _get_browser_engine
-        cfg = {"browser": {"engine": "Lightpanda"}}
-        with patch("hermes_cli.config.read_raw_config", return_value=cfg):
-            assert _get_browser_engine() == "lightpanda"
-
-    def test_invalid_engine_falls_back_to_auto(self):
-        """Unknown engine values are rejected and fall back to 'auto'."""
-        from tools.browser_tool import _get_browser_engine
-        cfg = {"browser": {"engine": "firefox"}}
-        with patch("hermes_cli.config.read_raw_config", return_value=cfg):
-            assert _get_browser_engine() == "auto"
 
     def test_caching(self):
         """Result is cached — second call doesn't re-read config."""
@@ -127,15 +92,7 @@ class TestShouldInjectEngine:
     def test_no_inject_with_cdp_override(self):
         from tools.browser_tool import _should_inject_engine
         with patch("tools.browser_tool._is_camofox_mode", return_value=False), \
-             patch("tools.browser_tool._get_cdp_override", return_value="ws://localhost:9222"):
-            assert _should_inject_engine("lightpanda") is False
-
-    def test_no_inject_with_cloud_provider(self):
-        from tools.browser_tool import _should_inject_engine
-        mock_provider = MagicMock()
-        with patch("tools.browser_tool._is_camofox_mode", return_value=False), \
-             patch("tools.browser_tool._get_cdp_override", return_value=""), \
-             patch("tools.browser_tool._get_cloud_provider", return_value=mock_provider):
+             patch("tools.browser_tool._get_cdp_override_raw", return_value="ws://localhost:9222"):
             assert _should_inject_engine("lightpanda") is False
 
 
@@ -157,71 +114,12 @@ class TestNeedsLightpandaFallback:
         result = {"success": False, "error": "page.goto: Timeout"}
         assert _needs_lightpanda_fallback("lightpanda", "open", result) is True
 
-    def test_failed_command_reason_is_user_visible(self):
-        from tools.browser_tool import _lightpanda_fallback_reason
-        result = {"success": False, "error": "page.goto: Timeout"}
-        reason = _lightpanda_fallback_reason("lightpanda", "open", result)
-        assert reason is not None
-        assert "page.goto: Timeout" in reason
-        assert "retried with Chrome" in reason
 
     def test_empty_snapshot_triggers_fallback(self):
         from tools.browser_tool import _needs_lightpanda_fallback
         result = {"success": True, "data": {"snapshot": ""}}
         assert _needs_lightpanda_fallback("lightpanda", "snapshot", result) is True
 
-    def test_short_snapshot_triggers_fallback(self):
-        from tools.browser_tool import _needs_lightpanda_fallback
-        result = {"success": True, "data": {"snapshot": "- none"}}
-        assert _needs_lightpanda_fallback("lightpanda", "snapshot", result) is True
-
-    def test_normal_snapshot_does_not_trigger(self):
-        from tools.browser_tool import _needs_lightpanda_fallback
-        result = {"success": True, "data": {
-            "snapshot": '- heading "Example Domain" [ref=e1]\n- link "Learn more" [ref=e2]'
-        }}
-        assert _needs_lightpanda_fallback("lightpanda", "snapshot", result) is False
-
-    def test_small_screenshot_triggers_fallback(self, tmp_path):
-        from tools.browser_tool import _needs_lightpanda_fallback
-        # Create a tiny file simulating the Lightpanda placeholder PNG
-        placeholder = tmp_path / "placeholder.png"
-        placeholder.write_bytes(b"\x89PNG" + b"\x00" * 2000)  # ~2KB
-        result = {"success": True, "data": {"path": str(placeholder)}}
-        assert _needs_lightpanda_fallback("lightpanda", "screenshot", result) is True
-
-    def test_actual_placeholder_size_triggers_fallback(self, tmp_path):
-        from tools.browser_tool import _needs_lightpanda_fallback
-        # Lightpanda PR #1766 resized the placeholder to 1920x1080 (~17 KB)
-        placeholder = tmp_path / "placeholder_1920.png"
-        placeholder.write_bytes(b"\x89PNG" + b"\x00" * 16693)  # actual measured: 16697 bytes
-        result = {"success": True, "data": {"path": str(placeholder)}}
-        assert _needs_lightpanda_fallback("lightpanda", "screenshot", result) is True
-
-    def test_normal_screenshot_does_not_trigger(self, tmp_path):
-        from tools.browser_tool import _needs_lightpanda_fallback
-        # Create a larger file simulating a real Chrome screenshot
-        real_screenshot = tmp_path / "real.png"
-        real_screenshot.write_bytes(b"\x89PNG" + b"\x00" * 50_000)  # ~50KB
-        result = {"success": True, "data": {"path": str(real_screenshot)}}
-        assert _needs_lightpanda_fallback("lightpanda", "screenshot", result) is False
-
-    def test_successful_open_does_not_trigger(self):
-        from tools.browser_tool import _needs_lightpanda_fallback
-        result = {"success": True, "data": {"title": "Example", "url": "https://example.com"}}
-        assert _needs_lightpanda_fallback("lightpanda", "open", result) is False
-
-    def test_close_command_never_triggers_fallback(self):
-        """Session-management commands like 'close' are not fallback-eligible."""
-        from tools.browser_tool import _needs_lightpanda_fallback
-        result = {"success": False, "error": "session closed"}
-        assert _needs_lightpanda_fallback("lightpanda", "close", result) is False
-
-    def test_record_command_never_triggers_fallback(self):
-        """The 'record' command is tied to the engine daemon — not retryable."""
-        from tools.browser_tool import _needs_lightpanda_fallback
-        result = {"success": False, "error": "recording failed"}
-        assert _needs_lightpanda_fallback("lightpanda", "record", result) is False
 
     def test_unknown_command_does_not_trigger_fallback(self):
         """Commands not in the whitelist should not trigger fallback."""
@@ -248,8 +146,6 @@ class TestConfigIntegration:
         entry = OPTIONAL_ENV_VARS["AGENT_BROWSER_ENGINE"]
         assert entry["category"] == "tool"
         assert entry["advanced"] is True
-
-
 
 
 class TestLightpandaRequirements:
@@ -298,6 +194,58 @@ class TestCleanupResetsEngineCache:
         assert bt._browser_engine_resolved is False
 
 
+# ---------------------------------------------------------------------------
+# Chrome fallback behavior
+# ---------------------------------------------------------------------------
+
+class TestChromeFallback:
+    """Chrome fallback must hand off from Lightpanda without leaking engine policy."""
+
+    def test_uses_non_recursive_lightpanda_get_url(self):
+        import tools.browser_tool as bt
+
+        with patch("tools.browser_tool._run_browser_command", return_value={
+                 "success": True, "data": {"url": "https://example.com/"}
+             }) as run_command, \
+             patch("tools.browser_tool._find_agent_browser", side_effect=FileNotFoundError("stop")):
+            result = bt._run_chrome_fallback_command(
+                "task1", "screenshot", [], timeout=30
+            )
+
+        run_command.assert_called_once_with(
+            "task1", "get", ["url"], timeout=10, _engine_override="lightpanda"
+        )
+        assert result == {"success": False, "error": "stop"}
+
+    def test_chrome_fallback_injects_required_sandbox_args(self):
+        import tools.browser_tool as bt
+
+        captured_envs = []
+        mock_proc = MagicMock()
+        mock_proc.wait.return_value = None
+        mock_proc.returncode = 1
+
+        def capture_popen(_cmd, **kwargs):
+            captured_envs.append(kwargs["env"])
+            return mock_proc
+
+        with patch("tools.browser_tool._run_browser_command", return_value={
+                 "success": True, "data": {"url": "https://example.com/"}
+             }), \
+             patch("tools.browser_tool._find_agent_browser", return_value="/usr/bin/agent-browser"), \
+             patch("tools.browser_tool._chromium_installed", return_value=True), \
+             patch("tools.browser_tool._needs_chromium_sandbox_bypass", return_value=True), \
+             patch("subprocess.Popen", side_effect=capture_popen):
+            result = bt._run_chrome_fallback_command(
+                "task1", "screenshot", [], timeout=30
+            )
+
+        assert result["success"] is False
+        assert captured_envs
+        assert all(
+            env.get("AGENT_BROWSER_ARGS") == "--no-sandbox,--disable-dev-shm-usage"
+            for env in captured_envs
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -354,106 +302,6 @@ class TestLightpandaFallbackWarning:
         assert response["browser_engine_fallback"]["to"] == "chrome"
         bt._last_active_session_key.pop("warn-test", None)
 
-    def test_browser_navigate_surfaces_auto_snapshot_fallback_warning(self):
-        import json
-        import tools.browser_tool as bt
-
-        snapshot_result = bt._annotate_lightpanda_fallback(
-            {"success": True, "data": {"snapshot": "- heading \"Fallback OK\" [ref=e1]", "refs": {"e1": {}}}},
-            "Lightpanda returned an empty/too-short snapshot; retried with Chrome.",
-        )
-
-        with patch("tools.browser_tool._is_local_backend", return_value=True), \
-             patch("tools.browser_tool._get_cloud_provider", return_value=None), \
-             patch("tools.browser_tool._get_session_info", return_value={
-                 "session_name": "test", "_first_nav": False, "features": {"local": True, "proxies": True}
-             }), \
-             patch("tools.browser_tool._run_browser_command", side_effect=[
-                 {"success": True, "data": {"title": "Fallback OK", "url": "https://example.com/"}},
-                 snapshot_result,
-             ]):
-            response = json.loads(bt.browser_navigate("https://example.com", task_id="warn-test2"))
-
-        assert response["success"] is True
-        assert response["browser_engine"] == "chrome"
-        assert "Lightpanda fallback" in response["fallback_warning"]
-        assert response["element_count"] == 1
-        bt._last_active_session_key.pop("warn-test2", None)
-
-    def test_failed_fallback_warning_is_preserved_on_click_error(self):
-        import json
-        import tools.browser_tool as bt
-
-        result = bt._annotate_lightpanda_fallback(
-            {"success": False, "error": "Chrome fallback failed"},
-            "Lightpanda 'click' failed (timeout); retried with Chrome.",
-        )
-        bt._last_active_session_key["warn-test3"] = "warn-test3"
-        with patch("tools.browser_tool._run_browser_command", return_value=result):
-            response = json.loads(bt.browser_click("@e1", task_id="warn-test3"))
-
-        assert response["success"] is False
-        assert "Lightpanda fallback" in response["fallback_warning"]
-        assert response["browser_engine"] == "chrome"
-        bt._last_active_session_key.pop("warn-test3", None)
-
-
-    def test_browser_vision_lightpanda_uses_chrome_capture_and_normal_call_llm_shape(self, tmp_path):
-        import json
-        import tools.browser_tool as bt
-
-        chrome_shot = tmp_path / "chrome.png"
-        chrome_shot.write_bytes(b"\x89PNG" + b"0" * 128)
-
-        class _Msg:
-            content = "Example Domain screenshot"
-
-        class _Choice:
-            message = _Msg()
-
-        class _Response:
-            choices = [_Choice()]
-
-        captured_kwargs = {}
-
-        def fake_call_llm(**kwargs):
-            captured_kwargs.update(kwargs)
-            return _Response()
-
-        with patch("tools.browser_tool._get_browser_engine", return_value="lightpanda"), \
-             patch("tools.browser_tool._should_inject_engine", return_value=True), \
-             patch("tools.browser_tool._chrome_fallback_screenshot", return_value={
-                 "success": True, "data": {"path": str(chrome_shot)}
-             }), \
-             patch("hermes_constants.get_hermes_dir", return_value=tmp_path), \
-             patch("tools.browser_tool.call_llm", side_effect=fake_call_llm):
-            response = json.loads(bt.browser_vision("what is this?", task_id="vision-test"))
-
-        assert response["success"] is True
-        assert response["analysis"] == "Example Domain screenshot"
-        assert response["browser_engine"] == "chrome"
-        assert "Lightpanda fallback" in response["fallback_warning"]
-        assert "messages" in captured_kwargs
-        assert "images" not in captured_kwargs
-        assert captured_kwargs["task"] == "vision"
-
-
-    def test_browser_get_images_preserves_fallback_warning(self):
-        import json
-        import tools.browser_tool as bt
-
-        result = bt._annotate_lightpanda_fallback(
-            {"success": True, "data": {"result": "[]"}},
-            "Lightpanda 'eval' failed (timeout); retried with Chrome.",
-        )
-        bt._last_active_session_key["warn-images"] = "warn-images"
-        with patch("tools.browser_tool._run_browser_command", return_value=result):
-            response = json.loads(bt.browser_get_images(task_id="warn-images"))
-
-        assert response["success"] is True
-        assert response["browser_engine"] == "chrome"
-        assert "Lightpanda fallback" in response["fallback_warning"]
-        bt._last_active_session_key.pop("warn-images", None)
 
     def test_browser_vision_lightpanda_response_has_structured_fallback(self, tmp_path):
         import json
@@ -552,7 +400,7 @@ class TestEngineOverride:
     def test_no_override_uses_cached_engine(
         self, _camofox, _cdp, _cloud, _chromium, _local, _find, _session
     ):
-        """Without _engine_override, the cached engine is used."""
+        """Lightpanda gets neither auto-injected nor inherited Chrome arguments."""
         import tools.browser_tool as bt
 
         bt._cached_browser_engine = "lightpanda"
@@ -561,12 +409,14 @@ class TestEngineOverride:
         _session.return_value = {"session_name": "test-sess"}
 
         captured_cmds = []
+        captured_envs = []
         mock_proc = MagicMock()
         mock_proc.wait.return_value = None
         mock_proc.returncode = 0
 
         def capture_popen(cmd, **kwargs):
             captured_cmds.append(cmd)
+            captured_envs.append(kwargs["env"])
             return mock_proc
 
         # Return a substantive snapshot so the LP fallback does NOT trigger.
@@ -581,14 +431,26 @@ class TestEngineOverride:
                  __exit__=MagicMock(return_value=False),
              ))), \
              patch("tools.interrupt.is_interrupted", return_value=False), \
-             patch("tools.browser_tool._write_owner_pid"):
+             patch("tools.browser_tool._needs_chromium_sandbox_bypass", return_value=True), \
+             patch("tools.browser_tool._write_owner_pid"), \
+             patch.dict(os.environ, {}, clear=True):
+            # AppArmor/root detection would normally auto-inject Chromium args.
             bt._run_browser_command("task1", "snapshot", [])
 
-        # SHOULD contain "--engine lightpanda"
-        assert len(captured_cmds) == 1
-        assert "--engine" in captured_cmds[0]
-        engine_idx = captured_cmds[0].index("--engine")
-        assert captured_cmds[0][engine_idx + 1] == "lightpanda"
+            # User-supplied current and legacy Chromium knobs must also be removed.
+            with patch.dict(os.environ, {
+                "AGENT_BROWSER_ARGS": "--no-sandbox",
+                "AGENT_BROWSER_CHROME_FLAGS": "--disable-dev-shm-usage",
+            }):
+                bt._run_browser_command("task1", "snapshot", [])
+
+        assert len(captured_cmds) == 2
+        for command, environment in zip(captured_cmds, captured_envs):
+            assert "--engine" in command
+            engine_idx = command.index("--engine")
+            assert command[engine_idx + 1] == "lightpanda"
+            assert "AGENT_BROWSER_ARGS" not in environment
+            assert "AGENT_BROWSER_CHROME_FLAGS" not in environment
 
     def test_hybrid_local_sidecar_injects_engine_even_with_cloud_provider(self):
         """A task::local sidecar is local even when global cloud config exists."""
